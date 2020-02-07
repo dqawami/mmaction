@@ -42,7 +42,7 @@ model = dict(
         bn_frozen=True),
     bbox_roi_extractor=dict(
         type='SingleRoIStraight3DExtractor',
-        roi_layer=dict(type='RoIAlign', out_size=16, sample_num=2),
+        roi_layer=dict(type='RoIAlign2D', out_size=16, sample_num=2),
         out_channels=1024,
         featmap_strides=[16],
         with_temporal_pool=True),

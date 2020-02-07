@@ -4,8 +4,7 @@ from .losses import (
     weighted_smoothl1, accuracy,
     weighted_multilabel_binary_cross_entropy,
     multilabel_accuracy)
-from .ssn_losses import (OHEMHingeLoss, completeness_loss,
-                         classwise_regression_loss)
+from .ssn_losses import OHEMHingeLoss, completeness_loss, classwise_regression_loss
 
 __all__ = [
     'charbonnier_loss', 'SSIM_loss',

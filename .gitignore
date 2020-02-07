@@ -108,3 +108,8 @@ mmaction/version.py
 data
 .vscode
 .idea
+
+# project dirs
+work_dirs/
+modelzoo/
+data/

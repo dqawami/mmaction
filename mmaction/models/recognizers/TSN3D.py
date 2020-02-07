@@ -1,8 +1,10 @@
-from .base import BaseRecognizer
+import torch
+import torch.nn.functional as F
+
 from .. import builder
 from ..registry import RECOGNIZERS
-
-import torch
+from ..tenons.losses import HordeLoss
+from .base import BaseRecognizer
 
 
 @RECOGNIZERS.register_module
@@ -15,7 +17,8 @@ class TSN3D(BaseRecognizer):
                  segmental_consensus=None,
                  cls_head=None,
                  train_cfg=None,
-                 test_cfg=None):
+                 test_cfg=None,
+                 extra_losses_cfg=None):
 
         super(TSN3D, self).__init__()
         self.backbone = builder.build_backbone(backbone)
@@ -32,8 +35,6 @@ class TSN3D(BaseRecognizer):
         if segmental_consensus is not None:
             self.segmental_consensus = builder.build_segmental_consensus(
                 segmental_consensus)
-        else:
-            raise NotImplementedError
 
         if cls_head is not None:
             self.cls_head = builder.build_head(cls_head)
@@ -42,6 +43,13 @@ class TSN3D(BaseRecognizer):
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
+
+        if extra_losses_cfg is not None:
+            if hasattr(extra_losses_cfg, 'with_horde') and extra_losses_cfg.with_horde:
+                self.horde_loss = HordeLoss(extra_losses_cfg.in_channels, extra_losses_cfg.embd_size,
+                                            extra_losses_cfg.num_classes, extra_losses_cfg.max_moment,
+                                            extra_losses_cfg.scale)
+                self.horde_weight = extra_losses_cfg.horde_weight
 
         self.init_weights()
 
@@ -61,6 +69,10 @@ class TSN3D(BaseRecognizer):
     def with_cls_head(self):
         return hasattr(self, 'cls_head') and self.cls_head is not None
 
+    @property
+    def with_horde_loss(self):
+        return hasattr(self, 'horde_loss') and self.horde_loss is not None
+
     def init_weights(self):
         super(TSN3D, self).init_weights()
         self.backbone.init_weights()
@@ -77,12 +89,23 @@ class TSN3D(BaseRecognizer):
         if self.with_cls_head:
             self.cls_head.init_weights()
 
-    def extract_feat_with_flow(self, img_group,
-                               trajectory_forward=None,
-                               trajectory_backward=None):
-        x = self.backbone(img_group,
-                          trajectory_forward=trajectory_forward,
-                          trajectory_backward=trajectory_backward)
+    def reset_weights(self):
+        self.backbone.reset_weights()
+
+        if self.with_flownet:
+            self.flownet.reset_weights()
+
+        if self.with_spatial_temporal_module:
+            self.spatial_temporal_module.reset_weights()
+
+        if self.with_segmental_consensus:
+            self.segmental_consensus.reset_weights()
+
+        if self.with_cls_head:
+            self.cls_head.reset_weights()
+
+    def extract_feat_with_flow(self, img_group, trajectory_forward=None, trajectory_backward=None):
+        x = self.backbone(img_group, trajectory_forward=trajectory_forward, trajectory_backward=trajectory_backward)
         return x
 
     def extract_feat(self, img_group):
@@ -198,13 +221,21 @@ class TSN3D(BaseRecognizer):
                 trajectory_backward=trajectory_backward)
         else:
             x = self.extract_feat(img_group)
+        extracted_features = x
+
         if self.with_spatial_temporal_module:
             x = self.spatial_temporal_module(x)
+
         if self.with_segmental_consensus:
             x = x.reshape((-1, num_seg) + x.shape[1:])
             x = self.segmental_consensus(x)
             x = x.squeeze(1)
+        else:
+            if num_seg != 1:
+                raise NotImplementedError
+
         losses = dict()
+
         if self.with_flownet:
             losses.update(self.flownet.loss(photometric_forward,
                                             ssim_forward, smooth_forward,
@@ -212,11 +243,16 @@ class TSN3D(BaseRecognizer):
             losses.update(self.flownet.loss(photometric_backward,
                                             ssim_backward, smooth_backward,
                                             direction='backward'))
+
         if self.with_cls_head:
             cls_score = self.cls_head(x)
             gt_label = gt_label.squeeze()
             loss_cls = self.cls_head.loss(cls_score, gt_label)
             losses.update(loss_cls)
+
+        if self.with_horde_loss:
+            spatial_features = F.adaptive_avg_pool3d(extracted_features, (1, None, None))
+            losses['horde'] = self.horde_weight * self.horde_loss(spatial_features, gt_label)
 
         return losses
 
@@ -293,12 +329,15 @@ class TSN3D(BaseRecognizer):
                 trajectory_backward=trajectory_backward)
         else:
             x = self.extract_feat(img_group)
+
         if self.with_spatial_temporal_module:
             x = self.spatial_temporal_module(x)
+
         if self.with_segmental_consensus:
             x = x.reshape((-1, num_seg) + x.shape[1:])
             x = self.segmental_consensus(x)
             x = x.squeeze(1)
+
         if self.with_cls_head:
             x = self.cls_head(x)
 

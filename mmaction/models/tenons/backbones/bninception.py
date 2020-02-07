@@ -13,7 +13,7 @@ __all__ = ['BNInception']
 @BACKBONES.register_module
 class BNInception(nn.Module):
 
-    def __init__(self, 
+    def __init__(self,
                  pretrained=None,
                  bn_eval=True,
                  bn_frozen=False,

@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.utils.checkpoint as cp
 
 from ....utils.misc import rgetattr, rhasattr
-from .resnet import ResNet 
+from .resnet import ResNet
 from mmcv.cnn import constant_init, kaiming_init
 from mmcv.runner import load_checkpoint
 
@@ -80,7 +80,7 @@ class BasicBlock(nn.Module):
         self.conv1 = conv1x3x3(inplanes, planes, spatial_stride, 1, dilation)
         self.bn1 = nn.BatchNorm3d(planes)
         self.relu = nn.ReLU(inplace=True)
-        
+
         self.conv2 = conv1x3x3(planes, planes)
         self.bn2 = nn.BatchNorm3d(planes)
 
@@ -119,7 +119,7 @@ class BasicBlock(nn.Module):
 
         out = self.conv2(out)
         out = self.bn2(out)
-        
+
         if self.if_inflate:
             out = self.relu(out)
             if self.with_trajectory:
@@ -502,7 +502,7 @@ class ResNet_S3D(nn.Module):
                     y.append(torch.cat((flow_backward_y, flow_backward_x, flow_zero, flow_zero, flow_forward_y, flow_forward_x), 1))
                 else:
                     y.append(None)
-            
+
             x, remains = res_layer((x, y))
             assert len(remains) == 0 ## TODO: delete if check passes
             if i in self.out_indices:
@@ -544,3 +544,5 @@ class ResNet_S3D(nn.Module):
                 mod.eval()
                 for param in mod.parameters():
                     param.requires_grad = False
+
+        return self

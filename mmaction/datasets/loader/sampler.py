@@ -84,9 +84,8 @@ class DistributedGroupSampler(Sampler):
 
         self.num_samples = 0
         for i, j in enumerate(self.group_sizes):
-            self.num_samples += int(
-                math.ceil(self.group_sizes[i] * 1.0 / self.samples_per_gpu /
-                          self.num_replicas)) * self.samples_per_gpu
+            self.num_samples += int(math.ceil(
+                self.group_sizes[i] * 1.0 / self.samples_per_gpu / self.num_replicas)) * self.samples_per_gpu
         self.total_size = self.num_samples * self.num_replicas
 
     def __iter__(self):
@@ -99,8 +98,7 @@ class DistributedGroupSampler(Sampler):
             if size > 0:
                 indice = np.where(self.flag == i)[0]
                 assert len(indice) == size
-                indice = indice[list(torch.randperm(int(size),
-                                                    generator=g))].tolist()
+                indice = indice[list(torch.randperm(int(size), generator=g))].tolist()
                 extra = int(
                     math.ceil(
                         size * 1.0 / self.samples_per_gpu / self.num_replicas)

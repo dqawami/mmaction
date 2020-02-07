@@ -1,6 +1,4 @@
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from ...registry import SPATIAL_TEMPORAL_MODULES
 
 
@@ -17,9 +15,14 @@ class SimpleSpatialModule(nn.Module):
         if self.spatial_type == 'avg':
             self.op = nn.AvgPool2d(self.spatial_size, stride=1, padding=0)
 
-
     def init_weights(self):
         pass
 
-    def forward(self, input):
-        return self.op(input)
+    def reset_weights(self):
+        self.init_weights()
+
+    def forward(self, x, return_extra_data=False):
+        if return_extra_data:
+            return self.op(x), dict()
+        else:
+            return self.op(x)

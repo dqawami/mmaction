@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from ...registry import SEGMENTAL_CONSENSUSES
 
+
 class _SimpleConsensus(torch.autograd.Function):
     """Simplest segmental consensus module"""
 

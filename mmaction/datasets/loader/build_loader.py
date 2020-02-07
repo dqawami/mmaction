@@ -20,8 +20,7 @@ def build_dataloader(dataset,
                      **kwargs):
     if dist:
         rank, world_size = get_dist_info()
-        sampler = DistributedGroupSampler(dataset, imgs_per_gpu, world_size,
-                                          rank)
+        sampler = DistributedGroupSampler(dataset, imgs_per_gpu, world_size, rank)
         batch_size = imgs_per_gpu
         num_workers = workers_per_gpu
     else:

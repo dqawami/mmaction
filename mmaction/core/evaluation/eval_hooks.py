@@ -11,9 +11,8 @@ from mmcv.parallel import scatter, collate
 from torch.utils.data import Dataset
 
 from mmaction import datasets
-from .accuracy import top_k_accuracy
-from .ava_utils import (results2csv, read_csv, read_labelmap,
-                        read_exclusions)
+from .accuracy import mean_top_k_accuracy, mean_average_precision
+from .ava_utils import results2csv, read_csv, read_labelmap, read_exclusions
 
 try:
     import sys
@@ -44,20 +43,20 @@ class DistEvalHook(Hook):
     def after_train_epoch(self, runner):
         if not self.every_n_epochs(runner, self.interval):
             return
+
         runner.model.eval()
         results = [None for _ in range(len(self.dataset))]
+
         if runner.rank == 0:
             prog_bar = mmcv.ProgressBar(len(self.dataset))
+
         for idx in range(runner.rank, len(self.dataset), runner.world_size):
             data = self.dataset[idx]
-            data_gpu = scatter(
-                collate([data], samples_per_gpu=1),
-                [torch.cuda.current_device()])[0]
+            data_gpu = scatter(collate([data], samples_per_gpu=1), [torch.cuda.current_device()])[0]
 
             # compute output
             with torch.no_grad():
-                result = runner.model(
-                    return_loss=False, rescale=True, **data_gpu)
+                result = runner.model(return_loss=False, **data_gpu).cpu().numpy()
             results[idx] = result
 
             batch_size = runner.world_size
@@ -90,9 +89,12 @@ class DistEvalTopKAccuracyHook(DistEvalHook):
 
     def __init__(self,
                  dataset,
-                 k=(1,)):
-        super(DistEvalTopKAccuracyHook, self).__init__(dataset)
+                 interval=1,
+                 k=(1,),
+                 num_valid_classes=None):
+        super(DistEvalTopKAccuracyHook, self).__init__(dataset, interval)
         self.k = k
+        self.num_valid_classes = num_valid_classes
 
     def evaluate(self, runner, results):
         gt_labels = []
@@ -100,18 +102,23 @@ class DistEvalTopKAccuracyHook(DistEvalHook):
             ann = self.dataset.get_ann_info(i)
             gt_labels.append(ann['label'])
 
-        results = [res.squeeze() for res in results]
-        top1, top5 = top_k_accuracy(results, gt_labels, k=self.k)
+        results = np.array([res.squeeze() for res in results], dtype=np.float32)
+        if self.num_valid_classes is not None and self.num_valid_classes > 0:
+            results = results[:, :self.num_valid_classes]
+
         runner.mode = 'val'
-        runner.log_buffer.output['top1 acc'] = top1
-        runner.log_buffer.output['top5 acc'] = top5
+        for k in self.k:
+            runner.log_buffer.output['top{}_acc'.format(k)] = float(mean_top_k_accuracy(results, gt_labels, k=k))
+
+        runner.log_buffer.output['mAP'] = float(mean_average_precision(results, gt_labels))
+
         runner.log_buffer.ready = True
 
 
 class AVADistEvalmAPHook(DistEvalHook):
 
-    def __init__(self, dataset):
-        super(AVADistEvalmAPHook, self).__init__(dataset)
+    def __init__(self, dataset, interval=1):
+        super(AVADistEvalmAPHook, self).__init__(dataset, interval)
 
     def evaluate(self, runner, results, verbose=False):
 

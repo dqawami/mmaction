@@ -24,6 +24,7 @@ def rhasattr(obj, attr, *args):
             return getattr(obj, attr)
         else:
             return None
+
     return functools.reduce(_hasattr, [obj] + attr.split('.')) is not None
 
 

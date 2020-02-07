@@ -6,7 +6,7 @@ from torch.nn.modules.utils import _triple
 
 import math
 
-import traj_conv_cuda
+from . import traj_conv_cuda
 
 class TrajConvFunction(Function):
 
@@ -101,7 +101,7 @@ class TrajConvFunction(Function):
                 grad_bias = torch.zeros_like(bias)
                 traj_conv_cuda.deform_3d_conv_backward_parameters_cuda(
                     input, offset, grad_output,
-                    grad_weight, grad_bias, ctx.bufs_[0], ctx.bufs_[1], 
+                    grad_weight, grad_bias, ctx.bufs_[0], ctx.bufs_[1],
                     weight.size(2), weight.size(3), weight.size(4),
                     ctx.stride[0], ctx.stride[1], ctx.stride[2],
                     ctx.padding[0], ctx.padding[1], ctx.padding[2],

@@ -2,14 +2,16 @@ import argparse
 
 import torch
 import mmcv
-from mmcv.runner import load_checkpoint, parallel_test, obj_from_dict
+import numpy as np
+
+from mmcv.runner import parallel_test, obj_from_dict
 from mmcv.parallel import scatter, collate, MMDataParallel
 
 from mmaction import datasets
+from mmaction.core import load_checkpoint, update_data_paths
 from mmaction.datasets import build_dataloader
 from mmaction.models import build_recognizer, recognizers
-from mmaction.core.evaluation.accuracy import (softmax, top_k_accuracy,
-                                               mean_class_accuracy)
+from mmaction.core.evaluation.accuracy import invalid_filtered, mean_top_k_accuracy, mean_average_precision
 
 
 def single_test(model, data_loader):
@@ -19,10 +21,10 @@ def single_test(model, data_loader):
     prog_bar = mmcv.ProgressBar(len(dataset))
     for i, data in enumerate(data_loader):
         with torch.no_grad():
-            result = model(return_loss=False, **data)
+            result = model(**data, return_loss=False)
         results.append(result)
 
-        batch_size = data['img_group_0'].data[0].size(0)
+        batch_size = data['img_group'].data[0].size(0)
         for _ in range(batch_size):
             prog_bar.update()
     return results
@@ -37,16 +39,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Test an action recognizer')
     parser.add_argument('config', help='test config file path')
     parser.add_argument('checkpoint', help='checkpoint file')
-    parser.add_argument(
-        '--gpus', default=1, type=int, help='GPU number used for testing')
-    parser.add_argument(
-        '--proc_per_gpu',
-        default=1,
-        type=int,
-        help='Number of processes per GPU')
+    parser.add_argument('--data_dir', help='the dir with dataset')
+    parser.add_argument('--gpus', default=1, type=int, help='GPU number used for testing')
+    parser.add_argument('--proc_per_gpu', default=1, type=int, help='Number of processes per GPU')
     parser.add_argument('--out', help='output result file')
-    parser.add_argument('--use_softmax', action='store_true',
-                        help='whether to use softmax score')
+    parser.add_argument('--mode', choices=['train', 'val', 'test'], default='test', help='target dataset for evaluation')
+    parser.add_argument('--num_classes', default=-1, type=int, help='Number of test classes')
     args = parser.parse_args()
     return args
 
@@ -54,23 +52,23 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if args.out is not None and not args.out.endswith(('.pkl', '.pickle')):
-        raise ValueError('The output file must be a pkl file.')
-
     cfg = mmcv.Config.fromfile(args.config)
     # set cudnn_benchmark
     if cfg.get('cudnn_benchmark', False):
         torch.backends.cudnn.benchmark = True
-    cfg.data.test.test_mode = True
+    if args.num_classes is not None and args.num_classes > 0:
+        cfg.num_test_classes = args.num_classes
+    if args.data_dir is not None:
+        cfg = update_data_paths(cfg, args.data_dir)
 
-    if cfg.data.test.oversample == 'three_crop':
-        cfg.model.spatial_temporal_module.spatial_size = 8
+    assert args.mode in cfg.data
+    data_cfg = getattr(cfg.data, args.mode)
+    data_cfg.test_mode = True
 
-    dataset = obj_from_dict(cfg.data.test, datasets, dict(test_mode=True))
+    dataset = obj_from_dict(data_cfg, datasets, dict(test_mode=True))
     if args.gpus == 1:
-        model = build_recognizer(
-            cfg.model, train_cfg=None, test_cfg=cfg.test_cfg)
-        load_checkpoint(model, args.checkpoint, strict=True)
+        model = build_recognizer(cfg.model, train_cfg=None, test_cfg=cfg.test_cfg)
+        load_checkpoint(model, args.checkpoint, strict=False)
         model = MMDataParallel(model, device_ids=[0])
 
         data_loader = build_dataloader(
@@ -94,28 +92,30 @@ def main():
             range(args.gpus),
             workers_per_gpu=args.proc_per_gpu)
 
-    if args.out:
-        print('writing results to {}'.format(args.out))
-        mmcv.dump(outputs, args.out)
-
     gt_labels = []
     for i in range(len(dataset)):
         ann = dataset.get_ann_info(i)
         gt_labels.append(ann['label'])
 
-    if args.use_softmax:
-        print("Averaging score over {} clips with softmax".format(
-            outputs[0].shape[0]))
-        results = [softmax(res, dim=1).mean(axis=0) for res in outputs]
-    else:
-        print("Averaging score over {} clips without softmax (ie, raw)".format(
-            outputs[0].shape[0]))
-        results = [res.mean(axis=0) for res in outputs]
-    top1, top5 = top_k_accuracy(results, gt_labels, k=(1, 5))
-    mean_acc = mean_class_accuracy(results, gt_labels)
-    print("Mean Class Accuracy = {:.02f}".format(mean_acc * 100))
-    print("Top-1 Accuracy = {:.02f}".format(top1 * 100))
-    print("Top-5 Accuracy = {:.02f}".format(top5 * 100))
+    results = np.array([res.cpu().numpy().mean(axis=0) for res in outputs], dtype=np.float32)
+
+    if cfg.data.num_test_classes is not None and cfg.data.num_test_classes > 0:
+        results = results[:, :cfg.data.num_test_classes]
+
+    top1_value = mean_top_k_accuracy(results, gt_labels, k=1)
+    top5_value = mean_top_k_accuracy(results, gt_labels, k=5)
+
+    print("\nMean Top-1 Accuracy = {:.03f}%".format(top1_value * 100))
+    print("Mean Top-5 Accuracy = {:.03f}%".format(top5_value * 100))
+
+    map_value = mean_average_precision(results, gt_labels)
+    print("mAP = {:.03f}%".format(map_value * 100))
+
+    invalid_ids = invalid_filtered(results, gt_labels)
+    print('\nNum invalid classes: {} / {}'.format(len(invalid_ids), cfg.data.num_test_classes))
+
+    num_invalid_samples = sum([len(ids) for ids in invalid_ids.values()])
+    print('Num invalid samples: {} / {}'.format(num_invalid_samples, len(gt_labels)))
 
 
 if __name__ == '__main__':

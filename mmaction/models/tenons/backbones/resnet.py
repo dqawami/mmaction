@@ -276,8 +276,7 @@ class ResNet(nn.Module):
             self.add_module(layer_name, res_layer)
             self.res_layers.append(layer_name)
 
-        self.feat_dim = self.block.expansion * 64 * 2**(
-            len(self.stage_blocks) - 1)
+        self.feat_dim = self.block.expansion * 64 * 2**(len(self.stage_blocks) - 1)
 
     def init_weights(self):
         if isinstance(self.pretrained, str):
